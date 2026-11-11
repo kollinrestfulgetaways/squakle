@@ -4,7 +4,31 @@ const icons={play:'<path class="play" d="m9 5 11 7-11 7Z"/>',pause:'<path d="M9 
 function icon(name){return `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name]||icons.minus}</svg>`}
 function playerIcon(name){$('#play').innerHTML=icon(name)}
 const collapsedHints=new Set();
-const dayKey=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+// All players share the America/New_York calendar, including EST/EDT changes.
+const easternDateFormatter=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
+function dayKey(now=new Date()){
+ const parts=Object.fromEntries(easternDateFormatter.formatToParts(now).map(part=>[part.type,part.value]));
+ return `${parts.year}-${parts.month}-${parts.day}`;
+}
+function nextEasternMidnight(now=new Date()){
+ // Search for the calendar boundary rather than assuming every day is 24 hours.
+ const currentDay=dayKey(now);let before=now.getTime(),after=before+27*60*60*1000;
+ while(after-before>1){const middle=Math.floor((before+after)/2);if(dayKey(new Date(middle))===currentDay)before=middle;else after=middle}
+ return after;
+}
+let midnightTimer=null,nextDailyAt=0;
+function scheduleDailyReset(){
+ clearTimeout(midnightTimer);
+ nextDailyAt=nextEasternMidnight();
+ midnightTimer=setTimeout(()=>{ensureDay();scheduleDailyReset();updateDailyCountdown()},Math.max(1,nextDailyAt-Date.now()+10));
+}
+function updateDailyCountdown(){
+ if(mode!=='daily')return;
+ const remaining=Math.max(0,Math.ceil((nextDailyAt-Date.now())/1000));
+ const hours=String(Math.floor(remaining/3600)).padStart(2,'0'),minutes=String(Math.floor(remaining%3600/60)).padStart(2,'0'),seconds=String(remaining%60).padStart(2,'0');
+ $('#nextnote').textContent=`Next bird in ${hours}:${minutes}:${seconds} · midnight Eastern`;
+}
+function resumeDailyClock(){ensureDay();scheduleDailyReset();updateDailyCountdown()}
 function dateParts(key){return key.split('-').map(Number)}
 function dayNumber(key){const [y,m,d]=dateParts(key);return Math.floor(Date.UTC(y,m-1,d)/86400000)}
 let date=dayKey(), mode='daily', practiceIndex=-1, state, selected=null, activeSuggestion=-1, visibleOptions=[], playRequest=0, replayClip=0;
@@ -12,18 +36,29 @@ const storageKey=()=>`dawn-chorus-v1-${date}`;
 function read(key,fallback){try{return JSON.parse(localStorage.getItem(key))??fallback}catch{return fallback}}
 function write(key,value){try{localStorage.setItem(key,JSON.stringify(value));return true}catch{return false}}
 const fresh=answer=>({answer,guesses:[],hints:[],revealed:false});
-const dailyAnswer=()=>RECORDINGS[((dayNumber(date)-dayNumber('2026-11-10'))%4+4)%4].id;
+const dailyAnswer=()=>{const count=RECORDINGS.length,index=dayNumber(date)-dayNumber('2026-11-10');return RECORDINGS[((index%count)+count)%count].id};
 function loadDaily(){const saved=read(storageKey(),null);state=saved&&saved.answer===dailyAnswer()&&Array.isArray(saved.guesses)&&Array.isArray(saved.hints)?saved:fresh(dailyAnswer());}
 function target(){return BIRDS.find(b=>b.id===state.answer)}
 function won(){return state.guesses.some(g=>g===state.answer)}
 function done(){return won()||state.guesses.length>=6||state.revealed}
 function save(){if(mode==='daily')write(storageKey(),state)}
-function ensureDay(){if(date===dayKey())return false;date=dayKey();if(mode==='daily'){stopAudio();loadDaily();render();$('#feedback').textContent='A new day, a new bird. Your puzzle has refreshed.';return true}return false}
+function ensureDay(){
+ const today=dayKey();if(date===today)return false;date=today;
+ scheduleDailyReset();
+ // A practice round can continue overnight; the next Daily visit uses today's bird.
+ if(mode!=='daily')return false;
+ stopAudio();selected=null;activeSuggestion=-1;visibleOptions=[];collapsedHints.clear();
+ $('#birdinput').value='';$('#suggestions').hidden=true;$('#suggestions').innerHTML='';$('#birdinput').setAttribute('aria-expanded','false');
+ loadDaily();replayClip=Math.min(state.guesses.length,5);render();
+ $('#audiostatus').textContent='Ready to listen';
+ $('#feedback').textContent='A new day, a new bird. Your puzzle has refreshed.';
+ return true;
+}
 function stopAudio(){playRequest++;$('#audio').pause();$('#audio').currentTime=0;playerIcon('play');$('#play').setAttribute('aria-label','Play bird recording');}
 function setMode(next){stopAudio();collapsedHints.clear();mode=next;selected=null;$('#birdinput').value='';$('#suggestions').hidden=true;$('#birdinput').setAttribute('aria-expanded','false');if(mode==='daily'){date=dayKey();loadDaily()}else{practiceIndex=(practiceIndex+1)%RECORDINGS.length;state=fresh(RECORDINGS[practiceIndex].id)}replayClip=Math.min(state.guesses.length,5);$('#feedback').textContent='';render()}
 function compareSets(a,b){if(a.length===b.length&&a.every(x=>b.includes(x)))return 'match';return a.some(x=>b.includes(x))?'close':'miss'}
 function comparisons(b,t){const diff=t.cm-b.cm;return [{label:'Family',text:b.family,type:b.family===t.family?'match':'miss'}, {label:'Length',text:`${b.cm} cm${diff>0?' · target larger':diff<0?' · target smaller':''}`,type:diff===0?'match':Math.abs(diff)<=3?'close':'miss'}, {label:'Habitat',text:b.habitats.join(' / '),type:compareSets(b.habitats,t.habitats)},{label:'US range',text:b.regions.join(' + '),type:compareSets(b.regions,t.regions)}]}
-function render(){const t=target(),finished=done(),n=state.guesses.length;$('#daily').classList.toggle('active',mode==='daily');$('#practice').classList.toggle('active',mode==='practice');$('#daily').setAttribute('aria-pressed',mode==='daily');$('#practice').setAttribute('aria-pressed',mode==='practice');$('#puzzlelabel').textContent=mode==='daily'?`DAILY BIRD #${Math.max(1,dayNumber(date)-dayNumber('2026-11-10')+1)}`:'PRACTICE BIRD';$('#puzzledate').textContent=new Date(date+'T12:00:00Z').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'America/New_York'});$('#listenTitle').textContent=finished?t.name:'Listen to the bird call';$('#listenSubtitle').textContent=finished?t.latin:'Play it as many times as you need.';$('#remaining').textContent=finished?'Puzzle complete':`${6-n} ${6-n===1?'guess':'guesses'} left`;$('#guessTitle').textContent=finished?'Your results':'Your guess';$('#birdinput').disabled=finished;$('#submitguess').disabled=finished;$('#skip').disabled=finished;$('#empty').hidden=n>0;$('#sandbox').hidden=mode!=='practice';$('#reveal').disabled=finished;$('#nextnote').textContent=mode==='daily'?'New puzzle at midnight Eastern.':'4 recordings · 12 birds · Unlimited practice';
+function render(){const t=target(),finished=done(),n=state.guesses.length;$('#daily').classList.toggle('active',mode==='daily');$('#practice').classList.toggle('active',mode==='practice');$('#daily').setAttribute('aria-pressed',mode==='daily');$('#practice').setAttribute('aria-pressed',mode==='practice');$('#puzzlelabel').textContent=mode==='daily'?`DAILY BIRD #${Math.max(1,dayNumber(date)-dayNumber('2026-11-10')+1)}`:'PRACTICE BIRD';$('#puzzledate').textContent=new Date(date+'T12:00:00Z').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'America/New_York'});$('#listenTitle').textContent=finished?t.name:'Listen to the bird call';$('#listenSubtitle').textContent=finished?t.latin:'Play it as many times as you need.';$('#remaining').textContent=finished?'Puzzle complete':`${6-n} ${6-n===1?'guess':'guesses'} left`;$('#guessTitle').textContent=finished?'Your results':'Your guess';$('#birdinput').disabled=finished;$('#submitguess').disabled=finished;$('#skip').disabled=finished;$('#empty').hidden=n>0;$('#sandbox').hidden=mode!=='practice';$('#reveal').disabled=finished;$('#nextnote').textContent=mode==='daily'?'New puzzle at midnight Eastern.':'4 recordings · 12 birds · Unlimited practice';updateDailyCountdown();
 $('#attempts').innerHTML=Array.from({length:6},(_,i)=>`<span class="attempt ${i<n?'used':''} ${state.guesses[i]===t.id?'correct':''}" aria-label="Guess ${i+1}: ${i<n?(state.guesses[i]===t.id?'correct':'used'):'available'}"></span>`).join('');
 $('#guesses').innerHTML=state.guesses.map((id,i)=>{if(id===null)return `<div class="skiprow">${i+1}. Skipped · longer audio unlocked</div>`;const b=BIRDS.find(x=>x.id===id);return `<article class="guessrow"><div class="guessname">${i+1}. ${b.name}<span>${id===t.id?'Correct':'Compare the clues'}</span></div><div class="cells">${comparisons(b,t).map(c=>`<div class="cell ${c.type}" aria-label="${c.label}: ${c.text}, ${c.type==='match'?'match':c.type==='close'?'partial match':'different'}"><small>${c.label}${icon(c.type==='match'?'check':c.type==='close'?'partial':'minus')}</small>${c.text}</div>`).join('')}</div></article>`}).join('');
 const hintData=[{key:'sound',title:'Sound',sub:'Rhythm and tone'},{key:'diet',title:'Diet',sub:'What it eats'},{key:'look',title:'Appearance',sub:'Colors and markings'}];$('#hints').innerHTML=hintData.map(h=>{const open=state.hints.includes(h.key)&&!collapsedHints.has(h.key);return `<div class="hint ${open?'open':''}"><button data-hint="${h.key}" aria-expanded="${open}"><span>${h.title}<small>${open?'Hint revealed':h.sub}</small></span>${icon(open?'minus':'plus')}</button>${open?`<p>${t[h.key]}</p>`:''}</div>`}).join('');
@@ -44,11 +79,17 @@ $('#guessform').onsubmit=e=>{e.preventDefault();if(ensureDay()||done())return;co
 function addGuess(id){stopAudio();state.guesses.push(id);replayClip=Math.min(state.guesses.length,5);selected=null;$('#birdinput').value='';$('#suggestions').hidden=true;$('#birdinput').setAttribute('aria-expanded','false');save();$('#feedback').textContent=id===state.answer?'You found your bird!':state.guesses.length>=6?'All six guesses used. Meet your mystery bird below.':id===null?'A longer listen is ready.':'Clues added below. A longer listen is ready.';render()}
 $('#skip').onclick=()=>{if(!ensureDay()&&!done())addGuess(null)};$('#daily').onclick=()=>{if(mode!=='daily')setMode('daily')};$('#practice').onclick=()=>{if(mode!=='practice')setMode('practice')};$('#newbird').onclick=()=>setMode('practice');$('#reveal').onclick=()=>{state.revealed=true;stopAudio();render()};
 function recordStats(){if(mode!=='daily')return;const history=read('dawn-chorus-history-v1',{});history[date]={won:won(),count:state.guesses.length,hints:state.hints.length};write('dawn-chorus-history-v1',history)}
-async function share(){const t=target(),grid=state.guesses.map(id=>id===null?'SKIP':comparisons(BIRDS.find(b=>b.id===id),t).map(c=>c.type==='match'?'MATCH':c.type==='close'?'NEAR':'MISS').join(' | ')).join('\n'),result=`Squakle · ${mode==='daily'?date:'Practice'}\n${won()?state.guesses.length:'X'}/6 · ${state.hints.length} hint(s)\n${grid}\n${new URL('./',location.href).href.replace(/\/$/,'')}`;try{await navigator.clipboard.writeText(result);$('#sharestatus').textContent='Result copied. The bird name stays hidden.'}catch{$('#sharestatus').textContent='Copy your result:';const ta=document.createElement('textarea');ta.value=result;ta.style.width='100%';ta.rows=10;ta.readOnly=true;$('#sharestatus').append(ta);ta.select()}}
+async function share(){if(ensureDay())return;const t=target(),grid=state.guesses.map(id=>id===null?'SKIP':comparisons(BIRDS.find(b=>b.id===id),t).map(c=>c.type==='match'?'MATCH':c.type==='close'?'NEAR':'MISS').join(' | ')).join('\n'),result=`Squakle · ${mode==='daily'?date:'Practice'}\n${won()?state.guesses.length:'X'}/6 · ${state.hints.length} hint(s)\n${grid}\n${new URL('./',location.href).href.replace(/\/$/,'')}`;try{await navigator.clipboard.writeText(result);$('#sharestatus').textContent='Result copied. The bird name stays hidden.'}catch{$('#sharestatus').textContent='Copy your result:';const ta=document.createElement('textarea');ta.value=result;ta.style.width='100%';ta.rows=10;ta.readOnly=true;$('#sharestatus').append(ta);ta.select()}}
 function modal(label,html){$('#modallabel').textContent=label;$('#modalbody').innerHTML=html;$('#modal').showModal()}
 $('#closemodal').onclick=()=>$('#modal').close();$('#modal').onclick=e=>{if(e.target===$('#modal')){const r=$('#modal').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)$('#modal').close()}};
-$('#how').onclick=()=>modal('HOW TO PLAY',`<h2>Find the bird in six tries.</h2><ol><li>Listen to the mystery recording. Replay it as often as you like.</li><li>Search for a bird and submit your guess.</li><li>Use family, length, habitat, and range feedback to narrow it down.</li><li>Each miss or skip uses one guess and unlocks a longer clip: 2, 4, 7, 11, 17, then 24 seconds.</li></ol><p><b>Green</b> means matching profiles. <b>Amber</b> means overlapping habitat/range or a length within 3 cm. <b>Gray</b> means different. The length clue tells you whether the target bird is larger or smaller.</p><p>Open hints anytime; they are counted in your result. Practice offers four rotating recordings and leaves your daily progress saved.</p><p>The daily bird resets at midnight Eastern time. In this prototype the four-bird schedule repeats; progress and statistics stay in this browser.</p>`);
+$('#how').onclick=()=>modal('HOW TO PLAY',`<h2>Find the bird in six tries.</h2><ol><li>Listen to the mystery recording. Replay it as often as you like.</li><li>Search for a bird and submit your guess.</li><li>Use family, length, habitat, and range feedback to narrow it down.</li><li>Each miss or skip uses one guess and unlocks a longer clip: 2, 4, 7, 11, 17, then 24 seconds.</li></ol><p><b>Green</b> means matching profiles. <b>Amber</b> means overlapping habitat/range or a length within 3 cm. <b>Gray</b> means different. The length clue tells you whether the target bird is larger or smaller.</p><p>Open hints anytime; they are counted in your result. Practice offers four rotating recordings and leaves your daily progress saved.</p><p>The daily bird changes at 12:00 a.m. Eastern time for everyone (EST in winter, EDT in summer). Open pages refresh automatically; sleeping pages catch up when you return. In this prototype the four-bird schedule repeats; progress and statistics stay in this browser.</p>`);
 $('#cluehelp').onclick=()=>$('#how').click();
 $('#stats').onclick=()=>{const h=read('dawn-chorus-history-v1',{}),entries=Object.values(h),wins=entries.filter(x=>x.won);modal('YOUR STATISTICS',`<h2>Your daily record.</h2><div class="statgrid"><div><b>${entries.length}</b><span>Completed</span></div><div><b>${wins.length}</b><span>Birds found</span></div><div><b>${entries.length?Math.round(wins.length/entries.length*100):0}%</b><span>Success rate</span></div></div><p>Statistics count completed daily puzzles in this browser. Practice does not affect your daily record.</p>`)};
 $('#credits').onclick=()=>modal('RECORDING CREDITS & DEMO NOTES',`<h2>Real birds. Real recordings.</h2><p>Four field recordings, shortened to 24 seconds, normalized, and faded for playback. Licensed adaptations remain under the original recording license.</p>${RECORDINGS.map(b=>`<p><b>${b.name}</b><br>${b.author} · ${b.recording}<br><a href="https://commons.wikimedia.org/wiki/File:${encodeURIComponent(b.file.replaceAll(' ','_'))}" target="_blank" rel="noopener">Original recording</a> · ${b.license==='Public domain'?'Public domain':`<a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener">CC BY-SA 3.0</a>`} · <a href="audio/${b.audio}-clip.mp3" download>Adapted clip</a></p>`).join('')}<h2>A starting point to build on.</h2><p>This demo includes 12 guess choices and four possible recorded answers. Daily puzzles repeat every four days. Answers are in browser code; this prototype is intended for testing, with browser-local progress rather than accounts or competitive scoring.</p><p>Size is a representative adult length, not an exact measurement. Habitat and US range are simplified, broad profiles across seasons. Similar profiles do not establish identity. A production game should use reviewed seasonal range, multiple vocalizations, and a larger, curated library.</p><p>Species references: ${BIRDS.map(b=>`<a href="https://www.allaboutbirds.org/guide/${b.guide}/" target="_blank" rel="noopener">${b.name}</a>`).join(', ')}. No endorsement implied.</p>`);
-playerIcon('play');loadDaily();replayClip=Math.min(state.guesses.length,5);render();document.addEventListener('visibilitychange',()=>{if(!document.hidden)ensureDay()});setInterval(ensureDay,30000);
+playerIcon('play');loadDaily();replayClip=Math.min(state.guesses.length,5);scheduleDailyReset();render();
+// Browsers can suspend timers in a background tab or while a phone is locked.
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)resumeDailyClock()});
+window.addEventListener('focus',resumeDailyClock);
+window.addEventListener('pageshow',resumeDailyClock);
+setInterval(()=>{ensureDay();updateDailyCountdown()},1000);
+
