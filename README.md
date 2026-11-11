@@ -17,13 +17,13 @@ First get the default GitHub Pages URL working. Then follow GitHub's custom-doma
 
 ## Demo behavior
 
-Six guesses with 2, 4, 7, 11, 17, and 24-second clips. Twelve guess choices and four recorded answers; daily answers repeat every four days and reset at midnight America/New_York. Progress and statistics stay in the current browser and hostname. Practice is unlimited and temporary. Feedback profiles are deliberately simplified. Answers are in client JavaScript; this is not cheat-resistant competitive scoring.
+Six guesses with progressively longer excerpts of the same clip. There are 24 guess choices and 24 recorded answers; daily answers repeat every 24 days and reset at midnight America/New_York. Clips vary from 3 to 24 seconds so selected intervals can focus on one target species. Progress and statistics stay in the current browser and hostname. Practice is unlimited and temporary. Feedback profiles are deliberately simplified. Answers are in client JavaScript; this is not cheat-resistant competitive scoring.
 
 Share links work on both a GitHub Pages repository path and a custom domain.
 
 ## Credits
 
-Northern Cardinal XC125284 and Mourning Dove XC128006: Jonathon Jongsma, CC BY-SA 3.0. American Robin and Blue Jay: G. McGrane, public domain. Recordings are shortened, normalized, and faded. The in-game Credits & demo details dialog links original recordings and licenses. Adapted CC BY-SA audio remains licensed CC BY-SA 3.0. Keep those credits with the recordings.
+All 24 recording sources and their individual licenses are listed in AUDIO-CREDITS.md, audio-sources.json, and the in-game Credits dialog. Keep those attributions and source licenses with redistributed clips.
 
 The Squakle logo is the approved S-shaped bird monogram. Fonts are loaded from Google Fonts with system fallbacks.
 
@@ -37,3 +37,7 @@ The Squakle logo is the approved S-shaped bird monogram. Fonts are loaded from G
 ## Edit
 
 `index.html`: layout; `style.css`: appearance; `app.js`: game logic; `data.js`: species and recording metadata; `peaks.js`: audio waveform data. `audio/` contains the bundled MP3 recordings.
+
+## Expanded audio collection
+
+See AUDIO-CREDITS.md and audio-sources.json for exact sources, authors, licenses, original intervals, and screening limits. Each audio adaptation retains its source license. Only public-domain, CC BY, and CC BY-SA audio is included. All 24 species have sound, diet, appearance, and fact clues. The first four bird IDs and daily order are preserved; the later daily rotation expands to all 24 species.
